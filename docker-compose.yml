@@ -1,0 +1,151 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: lead_intelligence_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: lead_intelligence
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ─────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: lead_intelligence_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI Backend ────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: lead_intelligence_api
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/lead_intelligence
+      DATABASE_SYNC_URL: postgresql://postgres:password@postgres:5432/lead_intelligence
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-lead-intelligence-jwt-secret-change-in-production}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ENVIRONMENT: production
+      DEBUG: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload
+
+  # ── Celery Worker: Pipeline Queue ────────────────────────────────────────────
+  celery_pipeline:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: lead_intelligence_celery_pipeline
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/lead_intelligence
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    depends_on:
+      - postgres
+      - redis
+    healthcheck:
+      disable: true
+    command: celery -A app.core.celery_app.celery_app worker --queues=pipeline --loglevel=info --concurrency=4
+
+  # ── Celery Worker: AI Queue ──────────────────────────────────────────────────
+  celery_ai:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: lead_intelligence_celery_ai
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/lead_intelligence
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      - postgres
+      - redis
+    healthcheck:
+      disable: true
+    command: celery -A app.core.celery_app.celery_app worker --queues=ai --loglevel=info --concurrency=2
+
+  # ── Celery Beat Scheduler ─────────────────────────────────────────────────────
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: lead_intelligence_celery_beat
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      - redis
+    healthcheck:
+      disable: true
+    command: celery -A app.core.celery_app.celery_app beat --loglevel=info
+
+  # ── Celery Flower Monitor ────────────────────────────────────────────────────
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: lead_intelligence_flower
+    restart: unless-stopped
+    ports:
+      - "5555:5555"
+    volumes:
+      - ./backend:/app
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+    healthcheck:
+      disable: true
+    command: python -m flower --broker=redis://redis:6379/0 --port=5555
+
+volumes:
+  postgres_data:
+  redis_data:

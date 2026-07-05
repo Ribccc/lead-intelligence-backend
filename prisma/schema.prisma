@@ -1,0 +1,231 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String      @id @default(uuid())
+  email         String      @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  role          String      @default("MEMBER") // "SUPER_ADMIN", "ADMIN", "EXECUTIVE", "MEMBER"
+  avatarUrl     String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  workspaces    WorkspaceMember[]
+  auditLogs     AuditLog[]
+}
+
+model Workspace {
+  id          String            @id @default(uuid())
+  name        String            @unique
+  logoUrl     String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  members     WorkspaceMember[]
+  leads       Lead[]
+  pipelines   Pipeline[]
+  campaigns   Campaign[]
+  integrations Integration[]
+  analytics   AnalyticsMetric[]
+  feeds       ActivityFeed[]
+}
+
+model WorkspaceMember {
+  id          String    @id @default(uuid())
+  workspaceId String
+  userId      String
+  role        String    @default("MEMBER") // "SUPER_ADMIN", "ADMIN", "EXECUTIVE", "MEMBER"
+  joinedAt    DateTime  @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+}
+
+model Lead {
+  id                String          @id @default(uuid())
+  workspaceId       String
+  companyName       String
+  sector            String
+  industry          String
+  employees         Int             @default(0)
+  funding           String?         // e.g., "$82M (Series C)", "Series B", "Public"
+  hiringStatus      String          @default("NONE") // "STABLE", "HIGH_VOLUME", "EXECUTIVE_SEARCH", "NONE"
+  conversionProb    Float           @default(0.0) // 0-100
+  aiScore           Int             @default(0)   // 0-100
+  status            String          @default("DISCOVERED") // "DISCOVERED", "ENRICHING", "ENRICHED", "QUALIFIED", "NURTURE", "DISQUALIFIED"
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  workspace         Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  insights          AIInsight[]
+  intentSignals     IntentSignal[]
+  reasoningPoints   QualificationReason[]
+  campaignLeads     CampaignLead[]
+}
+
+model IntentSignal {
+  id          String    @id @default(uuid())
+  leadId      String
+  signalType  String    // e.g., "Case Study Download", "Pricing Page View"
+  volume      Int       @default(1)
+  intensity   String    // e.g., "High", "Medium", "Low"
+  detectedAt  DateTime  @default(now())
+
+  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+}
+
+model AIInsight {
+  id          String    @id @default(uuid())
+  leadId      String
+  summary     String
+  sourceType  String    // e.g., "APAC Expansion", "earnings_report", "linkedin"
+  createdAt   DateTime  @default(now())
+
+  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+}
+
+model QualificationReason {
+  id          String    @id @default(uuid())
+  leadId      String
+  description String    // e.g., "High hiring activity in Data Eng roles"
+  passed      Boolean   @default(true)
+  checkedAt   DateTime  @default(now())
+
+  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+}
+
+model Pipeline {
+  id          String         @id @default(uuid())
+  workspaceId String
+  name        String
+  isActive    Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  nodes       PipelineNode[]
+  edges       PipelineEdge[]
+}
+
+model PipelineNode {
+  id          String             @id @default(uuid())
+  pipelineId  String
+  type        String             // "SEED_SOURCE", "WEB_CRAWLER", "AI_QUALIFIER", "DATA_CLEANING", "DEEP_SCAN", "OUTREACH"
+  name        String
+  config      String             // JSON string for storage (e.g. '{"model": "gpt-4o", "threshold": 0.85}')
+  status      String             @default("IDLE") // "IDLE", "RUNNING", "COMPLETED", "FAILED"
+  throughput  Float              @default(0.0) // leads per minute (lpm)
+  processed   Int                @default(0)
+  x           Float
+  y           Float
+
+  pipeline    Pipeline           @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+}
+
+model PipelineEdge {
+  id          String    @id @default(uuid())
+  pipelineId  String
+  sourceNodeId String
+  targetNodeId String
+
+  pipeline    Pipeline  @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+}
+
+model Campaign {
+  id          String         @id @default(uuid())
+  workspaceId String
+  name        String         // e.g., "Q4 Enterprise Growth"
+  totalOutreach Int          @default(0)
+  openRate     Float          @default(0.0)
+  replyRate    Float          @default(0.0)
+  bounceRate   Float          @default(0.0)
+  spamRisk     String         @default("VERY LOW")
+  creditsUsed  Int            @default(0)
+  creditsTotal Int            @default(10000)
+  isActive     Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  steps        CampaignStep[]
+  leads        CampaignLead[]
+}
+
+model CampaignStep {
+  id          String      @id @default(uuid())
+  campaignId  String
+  stepIndex   Int         // Order of execution
+  type        String      // "EMAIL", "LINKEDIN_CONNECT", "LINKEDIN_MESSAGE", "WAIT", "CONDITION"
+  name        String      // e.g. "AI-Generated Email", "Wait 4 hours"
+  config      String      // JSON string for storage (e.g. email subject/body)
+  
+  campaign    Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+}
+
+model CampaignLead {
+  id          String    @id @default(uuid())
+  campaignId  String
+  leadId      String
+  currentStep Int       @default(0)
+  lastStatus  String    // e.g., "SENT", "OPENED", "REPLIED", "BOUNCED", "WAITING"
+  updatedAt   DateTime  @updatedAt
+
+  campaign    Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, leadId])
+}
+
+model Integration {
+  id          String      @id @default(uuid())
+  workspaceId String
+  provider    String      // e.g., "Salesforce", "Hubspot"
+  isActive    Boolean     @default(false)
+  syncStatus  String      @default("SUCCESS") // "SUCCESS", "SYNCING", "FAILED"
+  recordsSynced Int       @default(0)
+  lastSyncedAt DateTime?
+
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model AnalyticsMetric {
+  id          String    @id @default(uuid())
+  workspaceId String
+  metricName  String    // e.g., "revenue_pipeline", "avg_velocity"
+  value       Float
+  timestamp   DateTime  @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model ActivityFeed {
+  id          String    @id @default(uuid())
+  workspaceId String
+  type        String    // e.g., "LEAD_ALERT", "AI_INSIGHT", "SYSTEM"
+  title       String
+  description String
+  score       Int?      // Optional score
+  meta        String?   // JSON string metadata
+  createdAt   DateTime  @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id          String    @id @default(uuid())
+  userId      String
+  action      String    // e.g., "CREATE_CAMPAIGN", "RUN_PIPELINE"
+  details     String
+  ipAddress   String?
+  timestamp   DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

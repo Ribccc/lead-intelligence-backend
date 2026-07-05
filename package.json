@@ -1,0 +1,15 @@
+{
+  "name": "lead-intelligence-backend",
+  "version": "1.0.0",
+  "description": "Production-ready backend for Lead Intelligence AI SaaS platform",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "uvicorn backend.app.main:app --host 0.0.0.0 --port 5000 --reload",
+    "build": "echo 'No TS build required for Python backend pivot.'",
+    "start": "uvicorn backend.app.main:app --host 0.0.0.0 --port 5000",
+    "db:migrate": "cd backend && alembic upgrade head",
+    "db:seed": "cd backend && python -m app.seed"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
